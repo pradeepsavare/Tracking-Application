@@ -5,6 +5,8 @@ const STORAGE_KEYS = {
   AUTH_MODE: "trackingApp.authMode"
 };
 
+const STATUS_FLOW = ["Processing", "In Transit", "Delivered"];
+
 const appEl = document.getElementById("app");
 
 const defaultBags = [
@@ -59,8 +61,17 @@ let state = {
   users: loadUsers(),
   bags: loadBags(),
   trackingResult: null,
+  authMessage: { type: "", text: "" },
   authMode: loadAuthMode(),
-  confirmationDialog: null
+  confirmationDialog: null,
+  isAddingBag: false,
+  addBagMessage: { type: "", text: "" },
+  lastAddedBagId: "",
+  statusUpdateBagId: "",
+  statusUpdateTarget: "",
+  isAuthLoading: false,
+  isTrackLoading: false,
+  isLogoutLoading: false
 };
 
 bootstrap();
@@ -237,9 +248,23 @@ function authTemplate() {
               <label class="field-label">Password</label>
               <input class="input-base" name="password" type="password" minlength="4" placeholder="Minimum 4 characters" required />
             </div>
-            <button class="btn-primary w-full py-3 rounded-xl">${isLogin ? "Login" : "Register"}</button>
+            <button class="btn-primary w-full py-3 rounded-xl flex items-center justify-center gap-2 ${state.isAuthLoading ? "opacity-85 cursor-not-allowed" : ""}" ${state.isAuthLoading ? "disabled" : ""}>
+              ${
+                state.isAuthLoading
+                  ? `${antIconTemplate("loading", "ant-icon ant-icon-sm ant-icon-spin")}<span>${isLogin ? "Logging in..." : "Registering..."}</span>`
+                  : isLogin
+                  ? "Login"
+                  : "Register"
+              }
+            </button>
           </form>
-          <p id="auth-message" class="text-sm mt-4"></p>
+          <p id="auth-message" class="text-sm mt-4 ${
+            state.authMessage.type === "success"
+              ? "text-green-700"
+              : state.authMessage.type === "error"
+              ? "text-red-600"
+              : "text-slate-600"
+          }">${escapeHtml(state.authMessage.text || "")}</p>
         </div>
       </div>
     </section>
@@ -267,7 +292,13 @@ function dashboardTemplate() {
           <p class="text-xs uppercase tracking-[0.2em] text-teal-700 font-semibold">Bag Tracking Application</p>
           <h1 class="text-2xl md:text-3xl font-extrabold brand-font">Hello, ${escapeHtml(userName)}</h1>
         </div>
-        <button id="logout-btn" class="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-100 font-semibold">Logout</button>
+        <button id="logout-btn" class="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-100 font-semibold inline-flex items-center justify-center gap-2 ${state.isLogoutLoading ? "opacity-85 cursor-not-allowed" : ""}" ${state.isLogoutLoading ? "disabled" : ""}>
+          ${
+            state.isLogoutLoading
+              ? `${antIconTemplate("loading", "ant-icon ant-icon-sm ant-icon-spin")}<span>Logging out...</span>`
+              : "Logout"
+          }
+        </button>
       </header>
 
       <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
@@ -309,6 +340,9 @@ function dashboardTemplate() {
             <p class="font-semibold">${escapeHtml(user?.gender || "-")}</p>
           </div>
         </div>
+        <div class="mt-4 flex justify-end">
+          <button id="delete-account-btn" class="px-4 py-2 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-semibold text-sm">Delete Account</button>
+        </div>
       </section>
 
       <div class="grid lg:grid-cols-5 gap-5 mt-6">
@@ -334,23 +368,45 @@ function dashboardTemplate() {
               </div>
             </div>
             <div>
-              <label class="field-label">Tracking ID (optional)</label>
-              <input class="input-base" name="trackingId" placeholder="Auto-generated if empty" />
+              <label class="field-label">Tracking ID</label>
+              <input class="input-base" name="trackingId" required placeholder="Ex: BG-2109" />
             </div>
             <div>
-              <label class="field-label">Bag Image (optional)</label>
-              <input class="input-base" name="bagImage" type="file" accept="image/*" />
+              <label class="field-label">Bag Image</label>
+              <input class="input-base" name="bagImage" type="file" accept="image/*" required />
             </div>
-            <button class="btn-primary w-full py-3 rounded-xl">Add Bag</button>
+            <div id="bag-image-preview-wrap" class="bag-image-preview-wrap hidden">
+              <p class="text-xs font-semibold text-slate-500 mb-2">Image Preview</p>
+              <img id="bag-image-preview" class="bag-image-preview" alt="Selected bag preview" />
+            </div>
+            <button class="btn-primary w-full py-3 rounded-xl flex items-center justify-center gap-2 ${state.isAddingBag ? "opacity-85 cursor-not-allowed" : ""}" ${state.isAddingBag ? "disabled" : ""}>
+              ${
+                state.isAddingBag
+                  ? `${antIconTemplate("loading", "ant-icon ant-icon-sm ant-icon-spin")}<span>Adding bag...</span>`
+                  : "Add Bag"
+              }
+            </button>
           </form>
-          <p id="add-message" class="text-sm mt-3"></p>
+          <p id="add-message" class="text-sm mt-3 ${
+            state.addBagMessage.type === "success"
+              ? "text-green-700"
+              : state.addBagMessage.type === "error"
+              ? "text-red-600"
+              : "text-slate-600"
+          }">${escapeHtml(state.addBagMessage.text || "")}</p>
         </section>
 
         <section class="glass-card rounded-2xl p-5 lg:col-span-3">
           <h2 class="text-xl font-bold brand-font">Track Bag</h2>
           <form id="track-form" class="flex flex-col sm:flex-row gap-3 mt-4">
             <input class="input-base" name="trackingId" placeholder="Enter tracking ID" required />
-            <button class="btn-primary px-5 rounded-xl whitespace-nowrap">Track</button>
+            <button class="btn-primary px-5 rounded-xl whitespace-nowrap inline-flex items-center justify-center gap-2 ${state.isTrackLoading ? "opacity-85 cursor-not-allowed" : ""}" ${state.isTrackLoading ? "disabled" : ""}>
+              ${
+                state.isTrackLoading
+                  ? `${antIconTemplate("loading", "ant-icon ant-icon-sm ant-icon-spin")}<span>Tracking...</span>`
+                  : "Track"
+              }
+            </button>
           </form>
           ${trackingPanel}
         </section>
@@ -397,9 +453,17 @@ function confirmationDialogTemplate() {
 function bagCardTemplate(bag) {
   const badgeClass = statusBadgeClass(bag.status);
   const bagImage = getBagImage(bag.imageData);
+  const isNewlyAdded = state.lastAddedBagId === bag.id;
+  const isUpdating = state.statusUpdateBagId === bag.id;
+
+  const canMoveToTransit = canTransitionToNext(bag.status, "In Transit");
+  const canMoveToDelivered = canTransitionToNext(bag.status, "Delivered");
+
+  const transitBtnDisabled = isUpdating || !canMoveToTransit;
+  const deliveredBtnDisabled = isUpdating || !canMoveToDelivered;
 
   return `
-    <article class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+    <article class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm ${isNewlyAdded ? "bag-card-new" : ""}">
       <img src="${bagImage}" alt="${escapeHtml(bag.bagName)}" class="w-full h-40 object-cover rounded-lg mb-3 border border-slate-200" />
       <div class="flex items-start justify-between gap-2">
         <h3 class="font-bold brand-font text-lg">${escapeHtml(bag.bagName)}</h3>
@@ -411,9 +475,27 @@ function bagCardTemplate(bag) {
       <p class="text-sm text-slate-600">Current: ${escapeHtml(bag.currentLocation)}</p>
       <p class="text-xs text-slate-500 mt-2">Updated: ${escapeHtml(bag.lastUpdated)}</p>
       <div class="mt-3 flex flex-wrap gap-2">
-        <button class="status-btn px-3 py-1.5 text-xs rounded-lg border border-slate-300 hover:bg-slate-100" data-id="${escapeHtml(bag.id)}" data-status="Processing">Processing</button>
-        <button class="status-btn px-3 py-1.5 text-xs rounded-lg border border-slate-300 hover:bg-slate-100" data-id="${escapeHtml(bag.id)}" data-status="In Transit">Transit</button>
-        <button class="status-btn px-3 py-1.5 text-xs rounded-lg border border-slate-300 hover:bg-slate-100" data-id="${escapeHtml(bag.id)}" data-status="Delivered">Delivered</button>
+        <button class="status-btn px-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed inline-flex items-center gap-1.5" disabled data-id="${escapeHtml(bag.id)}" data-status="Processing">${antIconTemplate("processing", "ant-icon status-icon")}<span>Processing</span></button>
+        <button class="status-btn px-3 py-1.5 text-xs rounded-lg border ${
+          transitBtnDisabled ? "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed" : "border-slate-300 hover:bg-slate-100"
+        } inline-flex items-center gap-1.5" ${transitBtnDisabled ? "disabled" : ""} data-id="${escapeHtml(bag.id)}" data-status="In Transit">
+          ${
+            isUpdating && state.statusUpdateTarget === "In Transit"
+              ? antIconTemplate("loading", "ant-icon status-icon ant-icon-spin")
+              : antIconTemplate("transit", "ant-icon status-icon")
+          }
+          <span>${isUpdating && state.statusUpdateTarget === "In Transit" ? "Updating..." : "Transit"}</span>
+        </button>
+        <button class="status-btn px-3 py-1.5 text-xs rounded-lg border ${
+          deliveredBtnDisabled ? "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed" : "border-slate-300 hover:bg-slate-100"
+        } inline-flex items-center gap-1.5" ${deliveredBtnDisabled ? "disabled" : ""} data-id="${escapeHtml(bag.id)}" data-status="Delivered">
+          ${
+            isUpdating && state.statusUpdateTarget === "Delivered"
+              ? antIconTemplate("loading", "ant-icon status-icon ant-icon-spin")
+              : antIconTemplate("delivered", "ant-icon status-icon")
+          }
+          <span>${isUpdating && state.statusUpdateTarget === "Delivered" ? "Updating..." : "Delivered"}</span>
+        </button>
         <button class="delete-bag-btn px-3 py-1.5 text-xs rounded-lg border border-red-200 text-red-700 hover:bg-red-50" data-id="${escapeHtml(bag.id)}">Delete</button>
       </div>
     </article>
@@ -422,6 +504,7 @@ function bagCardTemplate(bag) {
 
 function trackingResultTemplate(bag) {
   const bagImage = getBagImage(bag.imageData);
+  const showProgress = bag.id !== "Not Found";
 
   return `
     <div class="mt-4 p-4 rounded-xl bg-white border border-slate-200">
@@ -433,6 +516,7 @@ function trackingResultTemplate(bag) {
         <span class="badge ${statusBadgeClass(bag.status)}">${escapeHtml(bag.status)}</span>
       </div>
       <img src="${bagImage}" alt="${escapeHtml(bag.bagName)}" class="w-full h-44 sm:h-56 object-cover rounded-lg border border-slate-200 mt-3" />
+      ${showProgress ? trackingProgressTemplate(bag) : ""}
       <p class="text-sm mt-2">Current location: <strong>${escapeHtml(bag.currentLocation)}</strong></p>
       <p class="text-sm">Destination: <strong>${escapeHtml(bag.destination)}</strong></p>
       <h4 class="font-semibold mt-3 mb-2">Timeline</h4>
@@ -447,62 +531,125 @@ function trackingResultTemplate(bag) {
   `;
 }
 
+function trackingProgressTemplate(bag) {
+  const currentIndex = statusIndex(bag.status);
+  const stepIconByStatus = {
+    Processing: "processing",
+    "In Transit": "transit",
+    Delivered: "delivered"
+  };
+
+  return `
+    <section class="tracking-progress mt-4" aria-label="Tracking progress">
+      <div class="progress-steps">
+        ${STATUS_FLOW.map((step, index) => {
+          const stateClass =
+            index < currentIndex ? "is-complete" : index === currentIndex ? "is-current" : "is-pending";
+
+          return `
+            <div class="progress-step ${stateClass}">
+              <span class="step-dot"></span>
+              <p class="step-label">${antIconTemplate(stepIconByStatus[step], "ant-icon step-ant-icon")}${escapeHtml(step)}</p>
+            </div>
+          `;
+        }).join("")}
+      </div>
+      ${
+        bag.status !== "Delivered"
+          ? `<div class="tracking-live mt-3">${antIconTemplate("loading", "ant-icon ant-icon-sm ant-icon-spin")}<span>Live update in progress...</span></div>`
+          : `<div class="tracking-live mt-3 delivered-live">${antIconTemplate("delivered", "ant-icon ant-icon-sm")}<span>Shipment completed</span></div>`
+      }
+      <div class="progress-shimmer mt-2" aria-hidden="true"></div>
+    </section>
+  `;
+}
+
 function bindAuthEvents() {
   const loginBtn = document.getElementById("auth-login-mode");
   const registerBtn = document.getElementById("auth-register-mode");
 
   loginBtn?.addEventListener("click", () => {
     state.authMode = "login";
+    state.authMessage = { type: "", text: "" };
+    state.isAuthLoading = false;
     saveAuthMode(state.authMode);
     render();
   });
 
   registerBtn?.addEventListener("click", () => {
     state.authMode = "register";
+    state.authMessage = { type: "", text: "" };
+    state.isAuthLoading = false;
     saveAuthMode(state.authMode);
     render();
   });
 
-  document.getElementById("auth-form")?.addEventListener("submit", (event) => {
+  document.getElementById("auth-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (state.isAuthLoading) {
+      return;
+    }
+
     const formData = new FormData(event.currentTarget);
     const fullName = String(formData.get("fullName") || "").trim();
     const mobile = String(formData.get("mobile") || "").trim();
     const gender = String(formData.get("gender") || "").trim();
     const email = String(formData.get("email") || "").trim();
     const password = String(formData.get("password") || "").trim();
-    const msg = document.getElementById("auth-message");
+
+    state.isAuthLoading = true;
+    state.authMessage = {
+      type: "info",
+      text: state.authMode === "login" ? "Checking credentials..." : "Creating your account..."
+    };
+    render();
+    await delay(700);
 
     if (!email || password.length < 4) {
-      msg.textContent = "Please enter valid credentials.";
-      msg.className = "text-sm mt-4 text-red-600";
+      state.authMessage = { type: "error", text: "Please enter valid credentials." };
+      state.isAuthLoading = false;
+      render();
       return;
     }
 
     const normalizedEmail = normalizeEmail(email);
 
     if (state.authMode === "register") {
+      if (!fullName || !mobile || !gender || !email || !password) {
+        state.authMessage = { type: "error", text: "Please fill all registration fields." };
+        state.isAuthLoading = false;
+        render();
+        return;
+      }
+
       if (!fullName) {
-        msg.textContent = "Please enter your full name.";
-        msg.className = "text-sm mt-4 text-red-600";
+        state.authMessage = { type: "error", text: "Please enter your full name." };
+        state.isAuthLoading = false;
+        render();
         return;
       }
 
       if (!/^\d{10,15}$/.test(mobile)) {
-        msg.textContent = "Please enter a valid mobile number (10 to 15 digits).";
-        msg.className = "text-sm mt-4 text-red-600";
+        state.authMessage = {
+          type: "error",
+          text: "Please enter a valid mobile number (10 to 15 digits)."
+        };
+        state.isAuthLoading = false;
+        render();
         return;
       }
 
       if (!gender) {
-        msg.textContent = "Please select gender.";
-        msg.className = "text-sm mt-4 text-red-600";
+        state.authMessage = { type: "error", text: "Please select gender." };
+        state.isAuthLoading = false;
+        render();
         return;
       }
 
       if (findUserByEmail(normalizedEmail)) {
-        msg.textContent = "This email is already registered. Please login.";
-        msg.className = "text-sm mt-4 text-red-600";
+        state.authMessage = { type: "error", text: "This email is already registered. Please login." };
+        state.isAuthLoading = false;
+        render();
         return;
       }
 
@@ -516,37 +663,87 @@ function bindAuthEvents() {
       saveUsers();
       state.session = { email: normalizedEmail };
       saveSession(state.session);
-      msg.textContent = "Registration successful.";
-      msg.className = "text-sm mt-4 text-green-700";
+      state.isAuthLoading = false;
+      state.authMessage = { type: "success", text: "Registration successful." };
       render();
       return;
     }
 
     const user = findUserByEmail(normalizedEmail);
     if (!user || user.password !== password) {
-      msg.textContent = "Invalid email or password.";
-      msg.className = "text-sm mt-4 text-red-600";
+      state.authMessage = { type: "error", text: "Invalid email or password." };
+      state.isAuthLoading = false;
+      render();
       return;
     }
 
     state.session = { email: normalizedEmail };
     saveSession(state.session);
-    msg.textContent = "Login successful.";
-    msg.className = "text-sm mt-4 text-green-700";
+    state.isAuthLoading = false;
+    state.authMessage = { type: "success", text: "Login successful." };
     render();
   });
 }
 
 function bindDashboardEvents() {
-  document.getElementById("logout-btn")?.addEventListener("click", () => {
+  const bagImageInput = document.querySelector('#add-bag-form input[name="bagImage"]');
+  const bagImagePreviewWrap = document.getElementById("bag-image-preview-wrap");
+  const bagImagePreview = document.getElementById("bag-image-preview");
+
+  const resetBagImagePreview = () => {
+    if (bagImagePreview) {
+      bagImagePreview.removeAttribute("src");
+    }
+
+    if (bagImagePreviewWrap) {
+      bagImagePreviewWrap.classList.add("hidden");
+    }
+  };
+
+  bagImageInput?.addEventListener("change", async (event) => {
+    const selectedFile = event.target?.files?.[0];
+    if (!selectedFile) {
+      resetBagImagePreview();
+      return;
+    }
+
+    const previewData = await fileToDataUrl(selectedFile);
+    if (!previewData) {
+      resetBagImagePreview();
+      return;
+    }
+
+    if (bagImagePreview) {
+      bagImagePreview.src = previewData;
+    }
+
+    if (bagImagePreviewWrap) {
+      bagImagePreviewWrap.classList.remove("hidden");
+    }
+  });
+
+  document.getElementById("logout-btn")?.addEventListener("click", async () => {
+    if (state.isLogoutLoading) {
+      return;
+    }
+
+    state.isLogoutLoading = true;
+    render();
+    await delay(500);
+
     state.session = null;
     saveSession(null);
     state.trackingResult = null;
+    state.isLogoutLoading = false;
     render();
   });
 
   document.getElementById("add-bag-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (state.isAddingBag) {
+      return;
+    }
+
     const formData = new FormData(event.currentTarget);
     const bagName = String(formData.get("bagName") || "").trim();
     const brand = String(formData.get("brand") || "").trim();
@@ -554,47 +751,84 @@ function bindDashboardEvents() {
     const destination = String(formData.get("destination") || "").trim();
     const bagImageFile = formData.get("bagImage");
     let trackingId = String(formData.get("trackingId") || "").trim().toUpperCase();
-    const addMsg = document.getElementById("add-message");
 
-    if (!trackingId) {
-      trackingId = generateTrackingId();
+    if (!bagName || !brand || !color || !destination || !trackingId) {
+      state.addBagMessage = { type: "error", text: "Please fill all fields in Add New Bag." };
+      render();
+      return;
+    }
+
+    if (!(bagImageFile instanceof File) || !bagImageFile.size) {
+      state.addBagMessage = { type: "error", text: "Please upload a bag image." };
+      render();
+      return;
     }
 
     const exists = state.bags.some((b) => b.id.toLowerCase() === trackingId.toLowerCase());
     if (exists) {
-      addMsg.textContent = "Tracking ID already exists. Use another ID.";
-      addMsg.className = "text-sm mt-3 text-red-600";
+      state.addBagMessage = { type: "error", text: "Tracking ID already exists. Use another ID." };
+      render();
       return;
     }
 
-    const now = nowText();
-    const imageData = await fileToDataUrl(bagImageFile);
-    const newBag = {
-      id: trackingId,
-      bagName,
-      owner: normalizeEmail(state.session.email),
-      imageData,
-      brand,
-      color,
-      destination,
-      status: "Processing",
-      currentLocation: "Shipment Created",
-      lastUpdated: now,
-      events: [{ time: now, note: "Bag added to system" }]
-    };
+    try {
+      state.isAddingBag = true;
+      state.addBagMessage = { type: "info", text: "Saving your bag details..." };
+      render();
 
-    state.bags.unshift(newBag);
-    saveBags();
-    addMsg.textContent = `Bag added successfully. Tracking ID: ${trackingId}`;
-    addMsg.className = "text-sm mt-3 text-green-700";
-    event.currentTarget.reset();
-    render();
+      const imageDataPromise = fileToDataUrl(bagImageFile);
+      await delay(700);
+      const imageData = await imageDataPromise;
+      const now = nowText();
+      const newBag = {
+        id: trackingId,
+        bagName,
+        owner: normalizeEmail(state.session.email),
+        imageData,
+        brand,
+        color,
+        destination,
+        status: "Processing",
+        currentLocation: "Shipment Created",
+        lastUpdated: now,
+        events: [{ time: now, note: "Bag added to system" }]
+      };
+
+      state.bags.unshift(newBag);
+      state.lastAddedBagId = trackingId;
+      saveBags();
+      state.addBagMessage = { type: "success", text: `Bag added successfully. Tracking ID: ${trackingId}` };
+      render();
+
+      setTimeout(() => {
+        if (state.lastAddedBagId === trackingId) {
+          state.lastAddedBagId = "";
+          render();
+        }
+      }, 1600);
+    } catch {
+      state.addBagMessage = { type: "error", text: "Could not add the bag. Please try again." };
+      render();
+    } finally {
+      state.isAddingBag = false;
+      event.currentTarget.reset();
+      resetBagImagePreview();
+      render();
+    }
   });
 
-  document.getElementById("track-form")?.addEventListener("submit", (event) => {
+  document.getElementById("track-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (state.isTrackLoading) {
+      return;
+    }
+
     const formData = new FormData(event.currentTarget);
     const trackingId = String(formData.get("trackingId") || "").trim().toLowerCase();
+
+    state.isTrackLoading = true;
+    render();
+    await delay(650);
 
     const bag = bagsForCurrentUser().find((b) => b.id.toLowerCase() === trackingId);
     if (!bag) {
@@ -606,11 +840,13 @@ function bindDashboardEvents() {
         destination: "Unknown",
         events: [{ time: nowText(), note: "No record for this tracking ID" }]
       };
+      state.isTrackLoading = false;
       render();
       return;
     }
 
     state.trackingResult = bag;
+    state.isTrackLoading = false;
     render();
   });
 
@@ -628,11 +864,20 @@ function bindDashboardEvents() {
     render();
   });
 
+  document.getElementById("delete-account-btn")?.addEventListener("click", () => {
+    state.confirmationDialog = {
+      type: "delete-account",
+      title: "Delete your account?",
+      message: "Are you sure you want to remove your account from our application? This action cannot be undone."
+    };
+    render();
+  });
+
   document.querySelectorAll(".status-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-id");
       const status = btn.getAttribute("data-status");
-      updateBagStatus(id, status);
+      await updateBagStatus(id, status);
     });
   });
 
@@ -669,8 +914,9 @@ function applyConfirmationAction() {
     return;
   }
 
+  const userEmail = normalizeEmail(state.session?.email || "");
+
   if (state.confirmationDialog.type === "clear-user-bags") {
-    const userEmail = normalizeEmail(state.session?.email || "");
     state.bags = state.bags.filter((bag) => normalizeEmail(bag.owner || "") !== userEmail);
     state.trackingResult = null;
     saveBags();
@@ -685,15 +931,54 @@ function applyConfirmationAction() {
     saveBags();
   }
 
+  if (state.confirmationDialog.type === "delete-account") {
+    state.bags = state.bags.filter((bag) => normalizeEmail(bag.owner || "") !== userEmail);
+    state.users = state.users.filter((user) => normalizeEmail(user.email || "") !== userEmail);
+
+    saveBags();
+    saveUsers();
+
+    state.session = null;
+    saveSession(null);
+    state.trackingResult = null;
+    state.authMode = "login";
+    saveAuthMode(state.authMode);
+    state.authMessage = { type: "success", text: "Your account has been removed successfully." };
+  }
+
   state.confirmationDialog = null;
   render();
 }
 
-function updateBagStatus(id, status) {
-  const bag = bagsForCurrentUser().find((item) => item.id === id);
+async function updateBagStatus(id, status) {
+  if (!id || !status || state.statusUpdateBagId) {
+    return;
+  }
+
+  const userEmail = normalizeEmail(state.session?.email || "");
+  const bag = state.bags.find(
+    (item) => item.id === id && normalizeEmail(item.owner || "") === userEmail
+  );
+
   if (!bag) {
     return;
   }
+
+  if (!canTransitionToNext(bag.status, status)) {
+    state.addBagMessage = {
+      type: "error",
+      text: "Follow steps only: Processing -> In Transit -> Delivered"
+    };
+    render();
+    return;
+  }
+
+  state.statusUpdateBagId = bag.id;
+  state.statusUpdateTarget = status;
+  state.addBagMessage = { type: "info", text: `Updating status to ${status}...` };
+  render();
+
+  await delay(900);
 
   bag.status = status;
   bag.lastUpdated = nowText();
@@ -715,7 +1000,26 @@ function updateBagStatus(id, status) {
     state.trackingResult = bag;
   }
 
+  state.addBagMessage = { type: "success", text: `Status updated: ${status}` };
+  state.statusUpdateBagId = "";
+  state.statusUpdateTarget = "";
+
   render();
+}
+
+function statusIndex(status) {
+  return STATUS_FLOW.indexOf(status);
+}
+
+function canTransitionToNext(currentStatus, nextStatus) {
+  const currentIndex = statusIndex(currentStatus);
+  const nextIndex = statusIndex(nextStatus);
+
+  if (currentIndex === -1 || nextIndex === -1) {
+    return false;
+  }
+
+  return nextIndex === currentIndex + 1;
 }
 
 function statusBadgeClass(status) {
@@ -763,6 +1067,12 @@ function fileToDataUrl(fileValue) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function getBagImage(imageData) {
   if (imageData) {
     return imageData;
@@ -782,4 +1092,15 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function antIconTemplate(name, className = "ant-icon") {
+  const icons = {
+    processing: "ant-design:clock-circle-filled",
+    transit: "ant-design:car-filled",
+    delivered: "ant-design:check-circle-filled",
+    loading: "ant-design:loading-3-quarters-outlined"
+  };
+
+  return `<iconify-icon icon="${icons[name] || "ant-design:question-circle-outlined"}" class="${className}" aria-hidden="true"></iconify-icon>`;
 }
