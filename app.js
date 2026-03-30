@@ -189,13 +189,28 @@ function render() {
   bindDashboardEvents();
 }
 
+function renderAuthModeTransition() {
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (!document.startViewTransition || prefersReducedMotion) {
+    render();
+    return;
+  }
+
+  document.startViewTransition(() => {
+    render();
+  });
+}
+
 function authTemplate() {
   const isLogin = state.authMode === "login";
 
   return `
-    <section class="h-screen p-3 sm:p-4 lg:p-5 flex items-center justify-center">
-      <div class="glass-card rounded-2xl w-full max-w-5xl grid md:grid-cols-2 overflow-hidden shadow-2xl auth-card-wrap">
-        <div class="p-6 md:p-8 lg:p-9 bg-gradient-to-br from-teal-900 to-teal-700 text-white">
+     <section class="auth-screen ${isLogin ? "auth-screen-login" : "auth-screen-register"}">
+      <div class="glass-card rounded-2xl w-full max-w-5xl grid md:grid-cols-2 overflow-hidden shadow-2xl auth-card-wrap auth-shell ${isLogin ? "auth-shell-login" : "auth-shell-register"}">
+        <div class="auth-shell-outline" aria-hidden="true"></div>
+        <div class="auth-shell-aura" aria-hidden="true"></div>
+        <div class="p-6 md:p-8 lg:p-9 text-white auth-hero-panel ${isLogin ? "auth-hero-panel-login auth-hero-surface-login" : "auth-hero-panel-register auth-hero-surface-register"}">
           <p class="uppercase tracking-[0.25em] text-xs mb-4">Smart Logistics</p>
           <h1 class="text-3xl md:text-4xl lg:text-5xl font-extrabold brand-font leading-tight">Track Every Bag, Every Step</h1>
           <p class="mt-4 lg:mt-5 text-teal-100 max-w-md">Login to manage shipments, add new bags, and track bag location in real time with tracking IDs.</p>
@@ -205,15 +220,17 @@ function authTemplate() {
             <li>Simple login and logout</li>
           </ul>
         </div>
-        <div class="p-6 md:p-8 lg:p-9 bg-white auth-form-scroll">
-          <div class="flex gap-2 mb-4 bg-slate-100 rounded-xl p-1">
-            <button id="auth-login-mode" class="flex-1 px-4 py-2 rounded-lg font-semibold ${isLogin ? "bg-white shadow" : "text-slate-500"}">Login</button>
-            <button id="auth-register-mode" class="flex-1 px-4 py-2 rounded-lg font-semibold ${!isLogin ? "bg-white shadow" : "text-slate-500"}">Register</button>
+        <div class="p-6 md:p-8 lg:p-9 bg-white auth-form-scroll auth-panel ${isLogin ? "auth-panel-login" : "auth-panel-register"}">
+          <div class="auth-toggle mb-5" aria-label="Authentication mode switch">
+            <div class="auth-toggle-indicator ${isLogin ? "auth-toggle-indicator-login" : "auth-toggle-indicator-register"}" aria-hidden="true"></div>
+            <button id="auth-login-mode" class="auth-toggle-btn ${isLogin ? "is-active" : ""}">Login</button>
+            <button id="auth-register-mode" class="auth-toggle-btn ${!isLogin ? "is-active" : ""}">Register</button>
           </div>
-          <h2 class="text-2xl font-bold brand-font mb-1">${isLogin ? "Welcome back" : "Create account"}</h2>
-          <p class="text-slate-500 text-sm mb-4">${isLogin ? "Enter your account details" : "Register once, then track bags anytime"}</p>
+          <div class="auth-form-stage ${isLogin ? "auth-form-stage-login" : "auth-form-stage-register"}">
+            <h2 class="text-2xl font-bold brand-font mb-1">${isLogin ? "Welcome back" : "Create account"}</h2>
+            <p class="text-slate-500 text-sm mb-4">${isLogin ? "Enter your account details" : "Register once, then track bags anytime"}</p>
 
-          <form id="auth-form" class="space-y-4">
+            <form id="auth-form" class="space-y-4">
             ${
               !isLogin
                 ? `
@@ -248,7 +265,7 @@ function authTemplate() {
               <label class="field-label">Password</label>
               <input class="input-base" name="password" type="password" minlength="4" placeholder="Minimum 4 characters" required />
             </div>
-            <button class="btn-primary w-full py-3 rounded-xl flex items-center justify-center gap-2 ${state.isAuthLoading ? "opacity-85 cursor-not-allowed" : ""}" ${state.isAuthLoading ? "disabled" : ""}>
+            <button class="btn-primary auth-submit-btn ${isLogin ? "auth-submit-btn-login" : "auth-submit-btn-register"} w-full py-3 rounded-xl flex items-center justify-center gap-2 ${state.isAuthLoading ? "opacity-85 cursor-not-allowed" : ""}" ${state.isAuthLoading ? "disabled" : ""}>
               ${
                 state.isAuthLoading
                   ? `${antIconTemplate("loading", "ant-icon ant-icon-sm ant-icon-spin")}<span>${isLogin ? "Logging in..." : "Registering..."}</span>`
@@ -257,14 +274,15 @@ function authTemplate() {
                   : "Register"
               }
             </button>
-          </form>
-          <p id="auth-message" class="text-sm mt-4 ${
+            </form>
+            <p id="auth-message" class="text-sm mt-4 ${
             state.authMessage.type === "success"
               ? "text-green-700"
               : state.authMessage.type === "error"
               ? "text-red-600"
               : "text-slate-600"
-          }">${escapeHtml(state.authMessage.text || "")}</p>
+            }">${escapeHtml(state.authMessage.text || "")}</p>
+          </div>
         </div>
       </div>
     </section>
@@ -569,19 +587,27 @@ function bindAuthEvents() {
   const registerBtn = document.getElementById("auth-register-mode");
 
   loginBtn?.addEventListener("click", () => {
+    if (state.authMode === "login") {
+      return;
+    }
+
     state.authMode = "login";
     state.authMessage = { type: "", text: "" };
     state.isAuthLoading = false;
     saveAuthMode(state.authMode);
-    render();
+    renderAuthModeTransition();
   });
 
   registerBtn?.addEventListener("click", () => {
+    if (state.authMode === "register") {
+      return;
+    }
+
     state.authMode = "register";
     state.authMessage = { type: "", text: "" };
     state.isAuthLoading = false;
     saveAuthMode(state.authMode);
-    render();
+    renderAuthModeTransition();
   });
 
   document.getElementById("auth-form")?.addEventListener("submit", async (event) => {
